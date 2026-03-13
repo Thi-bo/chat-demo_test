@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import type { User } from '../api/auth';
 import * as authApi from '../api/auth';
+import { api } from '../api/client';
 
 interface AuthContextValue {
   user: User | null;
@@ -23,17 +24,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const token = localStorage.getItem('access_token');
-    if (!token) {
-      setLoading(false);
-      return;
-    }
+    // Attempt to authenticate using stored user state and session cookies
+    setLoading(true);
     authApi
       .me()
       .then(setUser)
       .catch(() => {
-        localStorage.removeItem('access_token');
         localStorage.removeItem('user');
+        localStorage.removeItem('access_token');
         setUser(null);
       })
       .finally(() => setLoading(false));
@@ -48,8 +46,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const login = async (email: string, password: string) => {
+    // Initialiser le contexte CSRF si Sanctum est configuré ainsi (par sécurité)
+    try {
+      await api.get('/sanctum/csrf-cookie', { baseURL: import.meta.env.VITE_API_URL || '' });
+    } catch (e) {
+      // Ignore errors (might fail if the route doesn't exist)
+    }
     const data = await authApi.login(email, password);
-    localStorage.setItem('access_token', data.access_token);
+    if (data.access_token) {
+      localStorage.setItem('access_token', data.access_token);
+    }
     localStorage.setItem('user', JSON.stringify(data.user));
     setUser(data.user);
   };

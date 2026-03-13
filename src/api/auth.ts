@@ -1,4 +1,4 @@
-import { api, ensureCsrfCookie, getApiData } from './client';
+import { api, getApiData } from './client';
 
 export interface User {
   uuid: string;
@@ -8,22 +8,21 @@ export interface User {
 
 export interface LoginResponse {
   user: User;
-  access_token: string;
+  access_token?: string;
   token_type: string;
   expires_in: number;
 }
 
 export async function login(email: string, password: string): Promise<LoginResponse> {
-  await ensureCsrfCookie();
-  const res = await api.post<{ data: LoginResponse }>('/auth/login', { email, password, platform: 'mobile' });
+  const res = await api.post<{ data: LoginResponse }>('/auth/login', { email, password, platform: 'web' });
   const data = getApiData(res);
-  if (!data?.access_token) throw new Error('Login failed');
+  if (!data?.user) throw new Error('Login failed');
   return data;
 }
 
 export async function me(): Promise<User> {
-  const res = await api.get<{ data: { user: User } }>('/auth/me');
-  const data = getApiData(res) as { user: User } | undefined;
-  if (!data?.user) throw new Error('Not authenticated');
-  return data.user;
+  const res = await api.get<{ data: User }>('/auth/me');
+  const data = getApiData(res);
+  if (!data) throw new Error('Not authenticated');
+  return data;
 }

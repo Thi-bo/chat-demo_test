@@ -11,24 +11,8 @@ export const api = axios.create({
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('access_token');
   if (token) config.headers.Authorization = `Bearer ${token}`;
-  const csrf = getCsrfToken();
-  if (csrf) config.headers['X-XSRF-TOKEN'] = csrf;
   return config;
 });
-
-function getCsrfToken(): string | null {
-  const match = document.cookie.match(/XSRF-TOKEN=([^;]+)/);
-  return match ? decodeURIComponent(match[1]) : null;
-}
-
-/** À appeler avant le premier POST (ex. login) pour éviter l’erreur 419 CSRF. */
-export async function ensureCsrfCookie(): Promise<void> {
-  const origin = baseURL || '';
-  await fetch(origin ? `${origin}/sanctum/csrf-cookie` : '/sanctum/csrf-cookie', {
-    method: 'GET',
-    credentials: 'include',
-  });
-}
 
 api.interceptors.response.use(
   (r) => r,

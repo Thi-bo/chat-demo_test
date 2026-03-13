@@ -25,7 +25,7 @@ export default function Chat() {
   const [incomingCall, setIncomingCall] = useState<IncomingCall | null>(null);
   const [typingUsers, setTypingUsers] = useState<string[]>([]);
   const listRef = useRef<HTMLDivElement>(null);
-  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const loadConversation = useCallback(async () => {
     if (!conversationUuid) return;
@@ -41,7 +41,8 @@ export default function Chat() {
     if (!conversationUuid) return;
     try {
       const { list } = await api.getMessages(conversationUuid);
-      setMessages(list);
+      console.log('Messages historiques chargés:', list);
+      setMessages([...list].reverse());
       api.markRead(conversationUuid);
     } catch {
       setMessages([]);
@@ -57,6 +58,7 @@ export default function Chat() {
   useEffect(() => {
     if (!conversationUuid) return;
     const unsub = subscribeConversation(conversationUuid, (payload: unknown) => {
+      console.log('🔔 REVERB : Nouveau message reçu en temps réel !', payload);
       const p = payload as { uuid?: string; body?: string; user_uuid?: string; user_name?: string; created_at?: string };
       setMessages((prev) => {
         if (p.uuid && prev.some((m) => m.uuid === p.uuid)) return prev;
@@ -90,6 +92,7 @@ export default function Chat() {
       const channel = echo.private(`conversation.${conversationUuid}`);
       
       channel.listen('.call.incoming', (data: IncomingCall) => {
+        console.log('🔔 REVERB : Appel entrant reçu', data);
         // Ne pas afficher la notification si c'est nous qui appelons
         if (data.caller_uuid !== user?.uuid) {
           setIncomingCall(data);
@@ -98,6 +101,7 @@ export default function Chat() {
 
       // Écouter le typing indicator
       channel.listen('.user.typing', (data: { user_uuid: string; user_name: string }) => {
+        console.log('🔔 REVERB : Typing event reçu', data);
         if (data.user_uuid !== user?.uuid) {
           setTypingUsers((prev) => {
             if (prev.includes(data.user_name)) return prev;

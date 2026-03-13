@@ -17,12 +17,17 @@ window.Pusher = Pusher;
 
 export function getEcho(): Echo | null {
   if (window.Echo) {
-    console.log('? Echo already initialized');
+    console.log('‚úÖ Echo already initialized');
     return window.Echo;
   }
-
-  // Auth par cookie httpOnly (Sanctum) : pas de token dans localStorage,
-  // on laisse Laravel authentifier via /broadcasting/auth + cookies.
+  
+  const token = localStorage.getItem('access_token');
+  console.log('Ì¥ë Token from localStorage:', token ? 'EXISTS' : 'MISSING');
+  if (!token) {
+    console.error('‚ùå No access_token found in localStorage');
+    return null;
+  }
+  
   window.Echo = new Echo({
     broadcaster: 'reverb',
     key,
@@ -31,24 +36,14 @@ export function getEcho(): Echo | null {
     wssPort: Number(wsPort),
     forceTLS: scheme === 'https',
     enabledTransports: ['ws', 'wss'],
-    // Utiliser le proxy Vite (/broadcasting -> backend) + cookies httpOnly
-    authEndpoint: '/broadcasting/auth',
     authorizer: (channel: { name: string }) => ({
       authorize: (socketId: string, callback: (a: boolean, d?: { auth: string }) => void) => {
-        const getCookie = (name: string) => {
-          const match = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`));
-          return match ? match[1] : null;
-        };
-        const xsrfToken = getCookie('XSRF-TOKEN');
-
         fetch('/broadcasting/auth', {
           method: 'POST',
-          credentials: 'include', // ?? envoyer les cookies (Sanctum)
           headers: {
             'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
             Accept: 'application/json',
-            'X-Requested-With': 'XMLHttpRequest',
-            ...(xsrfToken ? { 'X-XSRF-TOKEN': decodeURIComponent(xsrfToken) } : {}),
           },
           body: JSON.stringify({
             socket_id: socketId,
@@ -56,27 +51,22 @@ export function getEcho(): Echo | null {
           }),
         })
           .then((r) => {
-            console.log(`ùùù Channel auth response for ${channel.name}:`, r.status);
-            if (!r.ok) {
-              return r.text().then((t) => {
-                throw new Error(`Broadcast auth failed (${r.status}): ${t}`);
-              });
-            }
+            console.log(`Ì¥ê Channel auth response for ${channel.name}:`, r.status);
             return r.json();
           })
           .then((data) => {
-            console.log('? Channel authorized:', channel.name);
+            console.log('‚úÖ Channel authorized:', channel.name);
             callback(false, { auth: data.auth ?? '' });
           })
           .catch((err) => {
-            console.error('? Channel auth failed:', channel.name, err);
+            console.error('‚ùå Channel auth failed:', channel.name, err);
             callback(true);
           });
       },
     }),
   });
   
-  console.log('? Echo initialized with Reverb', {
+  console.log('‚úÖ Echo initialized with Reverb', {
     host: wsHost,
     port: wsPort,
     key: key
@@ -88,20 +78,20 @@ export function getEcho(): Echo | null {
 export function subscribeConversation(conversationUuid: string, onMessage: (payload: unknown) => void) {
   const echo = getEcho();
   if (!echo) {
-    console.error('? Cannot subscribe: Echo not initialized');
+    console.error('‚ùå Cannot subscribe: Echo not initialized');
     return () => {};
   }
   
-  console.log('ùùù Subscribing to conversation:', conversationUuid);
+  console.log('Ì≥° Subscribing to conversation:', conversationUuid);
   const channel = echo.private(`conversation.${conversationUuid}`);
   
   channel.listen('.message.sent', (payload: unknown) => {
-    console.log('ùùù Message received via WebSocket:', payload);
+    console.log('Ì≥® Message received via WebSocket:', payload);
     onMessage(payload);
   });
   
   return () => {
-    console.log('ùùù Unsubscribing from conversation:', conversationUuid);
+    console.log('Ì¥å Unsubscribing from conversation:', conversationUuid);
     channel.stopListening('.message.sent');
   };
 }
