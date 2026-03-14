@@ -1,28 +1,48 @@
 import Echo from 'laravel-echo';
 import Pusher from 'pusher-js';
 
+type EchoReverb = Echo<'reverb'>;
+
 declare global {
   interface Window {
     Pusher: typeof Pusher;
-    Echo?: Echo;
+    Echo?: EchoReverb;
   }
 }
 
 const key = import.meta.env.VITE_REVERB_APP_KEY || 'local-key';
 const wsHost = import.meta.env.VITE_REVERB_HOST || 'localhost';
-const wsPort = import.meta.env.VITE_REVERB_PORT || '8080';
+const wsPort = import.meta.env.VITE_REVERB_PORT || '8081';
 const scheme = import.meta.env.VITE_REVERB_SCHEME === 'https' ? 'https' : 'http';
 
 window.Pusher = Pusher;
 
-export function getEcho(): Echo | null {
+/** Token Sanctum (Bearer) optionnel. Si absent, l'auth se fait par cookies (connexion web). */
+let authToken: string | null = null;
+
+export function setEchoAuthToken(token: string | null): void {
+  authToken = token;
   if (window.Echo) {
-    console.log('? Echo already initialized');
+    (window.Echo as EchoReverb & { conn?: { pusher?: { disconnect: () => void } } })?.conn?.pusher?.disconnect?.();
+    window.Echo = undefined;
+  }
+}
+
+function getXsrfToken(): string | null {
+  const match = document.cookie.match(/(?:^|; )XSRF-TOKEN=([^;]*)/);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+export function getEcho(token?: string | null): EchoReverb | null {
+  const t = token !== undefined ? token : authToken;
+
+  if (window.Echo) {
     return window.Echo;
   }
 
-  // Auth par cookie httpOnly (Sanctum) : pas de token dans localStorage,
-  // on laisse Laravel authentifier via /broadcasting/auth + cookies.
+  const useCookieAuth = !t;
+  const broadcastAuthUrl = '/api/broadcasting/auth';
+
   window.Echo = new Echo({
     broadcaster: 'reverb',
     key,
@@ -31,77 +51,98 @@ export function getEcho(): Echo | null {
     wssPort: Number(wsPort),
     forceTLS: scheme === 'https',
     enabledTransports: ['ws', 'wss'],
-    // Utiliser le proxy Vite (/broadcasting -> backend) + cookies httpOnly
-    authEndpoint: '/broadcasting/auth',
+    authEndpoint: broadcastAuthUrl,
     authorizer: (channel: { name: string }) => ({
-      authorize: (socketId: string, callback: (a: boolean, d?: { auth: string }) => void) => {
-        const getCookie = (name: string) => {
-          const match = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`));
-          return match ? match[1] : null;
+      authorize: (socketId: string, callback: (err: boolean, data?: { auth: string }) => void) => {
+        const headers: Record<string, string> = {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          'X-Requested-With': 'XMLHttpRequest',
         };
-        const xsrfToken = getCookie('XSRF-TOKEN');
+        if (t) {
+          headers['Authorization'] = `Bearer ${t}`;
+        }
+        const xsrf = getXsrfToken();
+        if (xsrf) headers['X-XSRF-TOKEN'] = xsrf;
 
-        fetch('/broadcasting/auth', {
+        fetch(broadcastAuthUrl, {
           method: 'POST',
-          credentials: 'include', // ?? envoyer les cookies (Sanctum)
-          headers: {
-            'Content-Type': 'application/json',
-            Accept: 'application/json',
-            'X-Requested-With': 'XMLHttpRequest',
-            ...(xsrfToken ? { 'X-XSRF-TOKEN': decodeURIComponent(xsrfToken) } : {}),
-          },
+          credentials: 'include',
+          headers,
           body: JSON.stringify({
             socket_id: socketId,
             channel_name: channel.name,
           }),
         })
           .then((r) => {
-            console.log(`ùùù Channel auth response for ${channel.name}:`, r.status);
             if (!r.ok) {
-              return r.text().then((t) => {
-                throw new Error(`Broadcast auth failed (${r.status}): ${t}`);
+              return r.text().then((text) => {
+                throw new Error(`Broadcast auth ${r.status}: ${text}`);
               });
             }
             return r.json();
           })
           .then((data) => {
-            console.log('? Channel authorized:', channel.name);
             callback(false, { auth: data.auth ?? '' });
           })
           .catch((err) => {
-            console.error('? Channel auth failed:', channel.name, err);
+            console.error('[Echo] Channel auth failed:', channel.name, err);
             callback(true);
           });
       },
     }),
   });
-  
-  console.log('? Echo initialized with Reverb', {
-    host: wsHost,
-    port: wsPort,
-    key: key
-  });
-  
+
+  console.log('[Echo] Initialized Reverb', { wsHost, wsPort, key, auth: useCookieAuth ? 'cookie' : 'bearer' });
   return window.Echo;
 }
 
-export function subscribeConversation(conversationUuid: string, onMessage: (payload: unknown) => void) {
+export interface MessageSentPayload {
+  uuid: string;
+  conversation_uuid: string;
+  user_uuid: string;
+  user_name: string;
+  body: string;
+  type: string;
+  metadata?: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface ConversationUpdatedPayload {
+  action: string;
+  [key: string]: unknown;
+}
+
+export type Unsubscribe = () => void;
+
+export function subscribeConversation(
+  conversationUuid: string,
+  callbacks: {
+    onMessage?: (payload: MessageSentPayload) => void;
+    onConversationUpdated?: (payload: ConversationUpdatedPayload) => void;
+  }
+): Unsubscribe {
   const echo = getEcho();
   if (!echo) {
-    console.error('? Cannot subscribe: Echo not initialized');
+    console.error('[Echo] Cannot subscribe: no Echo (login with platform=mobile)');
     return () => {};
   }
-  
-  console.log('ùùù Subscribing to conversation:', conversationUuid);
+
   const channel = echo.private(`conversation.${conversationUuid}`);
-  
-  channel.listen('.message.sent', (payload: unknown) => {
-    console.log('ùùù Message received via WebSocket:', payload);
-    onMessage(payload);
-  });
-  
+
+  if (callbacks.onMessage) {
+    channel.listen('.message.sent', (payload: MessageSentPayload) => {
+      callbacks.onMessage?.(payload);
+    });
+  }
+  if (callbacks.onConversationUpdated) {
+    channel.listen('.conversation.updated', (payload: ConversationUpdatedPayload) => {
+      callbacks.onConversationUpdated?.(payload);
+    });
+  }
+
   return () => {
-    console.log('ùùù Unsubscribing from conversation:', conversationUuid);
     channel.stopListening('.message.sent');
+    channel.stopListening('.conversation.updated');
   };
 }
