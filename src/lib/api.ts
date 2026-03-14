@@ -50,19 +50,24 @@ export async function login(
   platform: 'web' | 'mobile' = 'web'
 ): Promise<LoginResult> {
   const { data } = await api.post<{
-    data: { user: User; access_token?: string; refresh_token?: string };
-    success: boolean;
+    data?: { user?: User; access_token?: string; refresh_token?: string };
+    success?: boolean;
   }>('/api/auth/login', { email, password, platform });
 
-  if (!data.success || !data.data?.user) {
+  const payload = data?.data ?? (data as unknown as { user?: User; access_token?: string });
+  const user = payload?.user;
+  const accessToken = payload?.access_token;
+
+  if (!data?.success || !user) {
     throw new Error('Login failed');
   }
 
-  if (platform === 'mobile' && data.data.access_token) {
-    return { user: data.data.user, token: data.data.access_token };
+  if (platform === 'mobile' && accessToken) {
+    setApiToken(accessToken);
+    return { user, token: accessToken };
   }
 
-  return { user: data.data.user, token: null };
+  return { user, token: null };
 }
 
 export async function logout(): Promise<void> {
@@ -72,6 +77,19 @@ export async function logout(): Promise<void> {
 export async function getConversations(): Promise<Conversation[]> {
   const { data } = await api.get<{ data: { data: Conversation[] }; success: boolean }>('/api/conversations/discussions');
   return data.data?.data ?? [];
+}
+
+export async function getSalons(): Promise<Conversation[]> {
+  const { data } = await api.get<{ data: { data: Conversation[] }; success: boolean }>('/api/conversations/salons');
+  return data.data?.data ?? [];
+}
+
+/** Discussions + groupes (salons), triés par date de mise à jour. */
+export async function getConversationsAndGroups(): Promise<Conversation[]> {
+  const [discussions, salons] = await Promise.all([getConversations(), getSalons()]);
+  const all = [...discussions, ...salons];
+  all.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
+  return all;
 }
 
 export async function getMessages(conversationUuid: string, cursor?: string): Promise<{

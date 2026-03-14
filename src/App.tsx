@@ -4,6 +4,9 @@ import type { MessageSentPayload } from './lib/echo';
 import * as api from './lib/api';
 import { setApiToken } from './lib/api';
 
+const apiBase = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
+const isRemoteApi = Boolean(apiBase && !apiBase.includes('localhost') && !apiBase.includes('127.0.0.1'));
+
 function Login({ onLogin }: { onLogin: (user: api.User, token: string | null) => void }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -15,7 +18,8 @@ function Login({ onLogin }: { onLogin: (user: api.User, token: string | null) =>
     setError('');
     setLoading(true);
     try {
-      const result = await api.login(email, password, 'web');
+      const platform = isRemoteApi ? 'mobile' : 'web';
+      const result = await api.login(email, password, platform);
       onLogin(result.user, result.token);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Connexion échouée');
@@ -48,7 +52,11 @@ function Login({ onLogin }: { onLogin: (user: api.User, token: string | null) =>
         </button>
       </form>
       <p style={{ textAlign: 'center', color: '#71717a', fontSize: '0.9rem' }}>
-        Connexion <strong>web</strong> : cookies sécurisés (HTTP-only) pour l’API et le temps réel (Reverb).
+        {isRemoteApi ? (
+          <>Connexion <strong>token</strong> (recommandé depuis local vers l’API distante).</>
+        ) : (
+          <>Connexion <strong>web</strong> : cookies pour l’API et Reverb.</>
+        )}
       </p>
     </div>
   );
@@ -69,7 +77,7 @@ function ConversationList({
 
   useEffect(() => {
     api
-      .getConversations()
+      .getConversationsAndGroups()
       .then(setConversations)
       .catch((err) => setError(err instanceof Error ? err.message : 'Erreur'))
       .finally(() => setLoading(false));
@@ -92,7 +100,10 @@ function ConversationList({
       <ul className="conv-list">
         {conversations.map((c) => (
           <li key={c.uuid} onClick={() => onSelect(c)}>
-            <div className="name">{c.name || 'Conversation'}</div>
+            <div className="name">
+              {c.type === 'group' || c.type === 'salon' ? '👥 ' : ''}
+              {c.name || (c.type === 'direct' ? 'Conversation' : 'Groupe')}
+            </div>
             <div className="meta">
               {c.last_message?.body?.slice(0, 50) || '—'} · {new Date(c.updated_at).toLocaleString()}
             </div>

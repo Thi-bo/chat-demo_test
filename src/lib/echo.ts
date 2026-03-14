@@ -41,7 +41,8 @@ export function getEcho(token?: string | null): EchoReverb | null {
   }
 
   const useCookieAuth = !t;
-  const broadcastAuthUrl = '/api/broadcasting/auth';
+  const apiBase = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
+  const broadcastAuthUrl = apiBase ? `${apiBase}/api/broadcasting/auth` : '/api/broadcasting/auth';
 
   window.Echo = new Echo({
     broadcaster: 'reverb',
